@@ -51,6 +51,7 @@ git clone https://github.com/cenksari/aspnet-core-azureservicebus.git
 ```json
 {
   "ServiceBus": {
+    "QueueName": "test-queue",
     "ConnectionString": "YOUR_AZURE_SERVICE_BUS_CONNECTION_STRING",
   }
 }
