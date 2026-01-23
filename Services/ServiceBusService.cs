@@ -3,11 +3,24 @@
 using Models;
 using QueueService;
 
+/// <summary>
+/// Consumes ServiceBus queue.
+/// </summary>
+/// <param name="queueService">Queue service</param>
+/// <param name="configuration">Configuration</param>
+/// <param name="logger">Logger</param>
 public class ServiceBusService(
     IQueueService queueService,
+    IConfiguration configuration,
     ILogger<ServiceBusService> logger
 ) : BackgroundService
 {
+    /// <summary>
+    /// The name of the queue for processing.
+    /// </summary>
+    private readonly string queueName = configuration["ServiceBus:QueueName"]
+        ?? throw new MissingFieldException("ServiceBus queue name configuration not found!");
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Continuously run the logic until cancellation is requested.
@@ -15,10 +28,10 @@ public class ServiceBusService(
         {
             try
             {
-                await queueService.StartListeningAsync<Message>("test-queue", async message =>
+                await queueService.StartListeningAsync<Message>(queueName, async message =>
                 {
                     if (logger.IsEnabled(LogLevel.Information))
-                        logger.LogInformation("Message received width Id: {Id} : Message {Message}", message.Id, message.Text);
+                        logger.LogInformation("Message received width Id: {Id} and Message {Message}", message.Id, message.Text);
 
                     await Task.CompletedTask;
                 });

@@ -25,9 +25,13 @@ app.UseHttpsRedirection();
 
 app.MapPost("/send", async (
     IQueueService queueService,
+    IConfiguration configuration,
     [FromBody] Message message
 ) =>
 {
+    string queueName = configuration["ServiceBus:QueueName"]
+        ?? throw new MissingFieldException("ServiceBus queue name configuration not found!");
+
     if (string.IsNullOrEmpty(message.Text))
         return Results.BadRequest(
             new
@@ -37,7 +41,7 @@ app.MapPost("/send", async (
             }
         );
 
-    await queueService.SendMessageAsync("test-queue", message);
+    await queueService.SendMessageAsync(queueName, message);
 
     return Results.Ok(
         new
