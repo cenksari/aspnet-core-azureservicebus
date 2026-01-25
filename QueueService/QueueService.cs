@@ -83,6 +83,9 @@ public class QueueService(
     /// <param name="messageHandler">Message handler</param>
     public async Task StartListeningAsync<T>(string queueName, Func<T, Task> messageHandler)
     {
+        if (_processor is not null)
+            await StopListeningAsync();
+
         // Create a processor.
         _processor = serviceBusClient.CreateProcessor(queueName, new ServiceBusProcessorOptions
         {
@@ -93,14 +96,24 @@ public class QueueService(
         // Process message.
         _processor.ProcessMessageAsync += async args =>
         {
-            var body = args.Message.Body.ToString();
+            try
+            {
+                string body = args.Message.Body.ToString();
 
-            T? obj = JsonSerializer.Deserialize<T>(body);
+                T? obj = JsonSerializer.Deserialize<T>(body);
 
-            if (obj is not null)
-                await messageHandler(obj);
+                if (obj is not null)
+                    await messageHandler(obj);
 
-            await args.CompleteMessageAsync(args.Message);
+                await args.CompleteMessageAsync(args.Message);
+            }
+            catch (Exception ex)
+            {
+                if (logger.IsEnabled(LogLevel.Error))
+                    logger.LogError(ex, "An error occurred while processing the message. Abandoning message.");
+
+                await args.AbandonMessageAsync(args.Message);
+            }
         };
 
         // Process error.

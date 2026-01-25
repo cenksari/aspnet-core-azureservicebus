@@ -23,33 +23,36 @@ public class ServiceBusService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Continuously run the logic until cancellation is requested.
-        while (!stoppingToken.IsCancellationRequested)
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation("ServiceBus listener starting...");
+
+        try
         {
-            try
+            await queueService.StartListeningAsync<Message>(queueName, async message =>
             {
-                await queueService.StartListeningAsync<Message>(queueName, async message =>
-                {
-                    if (logger.IsEnabled(LogLevel.Information))
-                        logger.LogInformation("Message received width Id: {Id} and Message {Message}", message.Id, message.Text);
+                if (logger.IsEnabled(LogLevel.Information))
+                    logger.LogInformation("Message received width Id: {Id} and Message {Message}", message.Id, message.Text);
+            });
 
-                    await Task.CompletedTask;
-                });
-
-                stoppingToken.Register(async () => await queueService.StopListeningAsync());
-
-                await Task.Delay(Timeout.Infinite, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Gracefully handle cancellation (likely caused by stoppingToken)
-            }
-            catch (Exception ex)
-            {
-                // Log any unexpected errors during the date deactivation process.
-                if (logger.IsEnabled(LogLevel.Error))
-                    logger.LogError(ex, "An error occurred while deactivating dates. {Message}", ex.Message);
-            }
+            await Task.Delay(Timeout.Infinite, stoppingToken);
         }
+        catch (OperationCanceledException oce)
+        {
+            if (logger.IsEnabled(LogLevel.Information))
+                logger.LogInformation(oce, "ServiceBus listener is stopping due to cancellation.");
+        }
+        catch (Exception ex)
+        {
+            // Log any unexpected errors during the date deactivation process.
+            if (logger.IsEnabled(LogLevel.Error))
+                logger.LogError(ex, "Critical error in ServiceBus listener. {Message}", ex.Message);
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await queueService.StopListeningAsync();
+
+        await base.StopAsync(cancellationToken);
     }
 }
