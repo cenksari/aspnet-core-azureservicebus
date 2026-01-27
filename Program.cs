@@ -8,10 +8,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services.AddAzureClients(options =>
-{
-    options.AddServiceBusClient(builder.Configuration["ServiceBus:ConnectionString"]);
-});
+builder.Services
+    .AddRequestTimeouts(options =>
+    {
+        options.DefaultPolicy = new()
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+    })
+    .AddAzureClients(options =>
+    {
+        options.AddServiceBusClient(builder.Configuration["ServiceBus:ConnectionString"]);
+    });
 
 builder.Services.AddSingleton<IQueueService, QueueService>();
 
@@ -21,12 +29,15 @@ var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 
+app.UseRequestTimeouts();
+
 app.UseHttpsRedirection();
 
 app.MapPost("/send", async (
     IQueueService queueService,
     IConfiguration configuration,
-    [FromBody] Message message
+    [FromBody] Message message,
+    CancellationToken cancellationToken
 ) =>
 {
     string queueName = configuration["ServiceBus:QueueName"]
@@ -41,7 +52,7 @@ app.MapPost("/send", async (
             }
         );
 
-    await queueService.SendMessageAsync(queueName, message);
+    await queueService.SendMessageAsync(queueName, message, cancellationToken);
 
     return Results.Ok(
         new
