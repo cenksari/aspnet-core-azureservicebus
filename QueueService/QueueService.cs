@@ -8,10 +8,10 @@ using System.Text.Json;
 /// </summary>
 /// <param name="logger">Injected logger for logging operations</param>
 /// <param name="serviceBusClient">Injected Azure ServiceBusClient used for queue operations</param>
-public class QueueService(
+public sealed class QueueService(
     ILogger<QueueService> logger,
     ServiceBusClient serviceBusClient
-) : IQueueService
+) : IQueueService, IAsyncDisposable
 {
     /// <summary>
     /// Represents service bus processor.
@@ -19,22 +19,39 @@ public class QueueService(
     private ServiceBusProcessor? _processor;
 
     /// <summary>
+    /// Represents JSON serializer options.
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
+    /// <summary>
     /// Sends a message to the specified queue.
     /// </summary>
     /// <typeparam name="T">Generic type</typeparam>
     /// <param name="queueName">Queue name</param>
-    /// <param name="message">Message to send</param>
+    /// <param name="serviceBusMessage">Message to send</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    public async Task SendMessageAsync<T>(string queueName, T message, CancellationToken cancellationToken)
+    public async Task SendMessageAsync<T>(
+        string queueName,
+        T serviceBusMessage,
+        CancellationToken cancellationToken = default)
     {
+        // Check for null arguments.
+        ArgumentNullException.ThrowIfNull(serviceBusMessage);
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+
         // Create a sender for the queue.
-        ServiceBusSender sender = serviceBusClient.CreateSender(queueName);
+        await using ServiceBusSender sender = serviceBusClient.CreateSender(queueName);
 
         // Serialize the message to JSON.
-        string? jsonMessage = JsonSerializer.Serialize(message);
+        string jsonMessage = JsonSerializer.Serialize(serviceBusMessage, JsonOptions);
 
         // Send the message.
-        await sender.SendMessageAsync(new(jsonMessage), cancellationToken);
+        await sender.SendMessageAsync(new ServiceBusMessage(jsonMessage), cancellationToken);
     }
 
     /// <summary>
@@ -44,10 +61,16 @@ public class QueueService(
     /// <param name="queueName">Queue name</param>
     /// <param name="timeout">Time out</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    public async Task<T?> ReceiveMessageAsync<T>(string queueName, TimeSpan? timeout, CancellationToken cancellationToken)
+    public async Task<T?> ReceiveMessageAsync<T>(
+        string queueName,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken = default)
     {
+        // Check for null arguments.
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+
         // Create a receiver for the queue.
-        ServiceBusReceiver receiver = serviceBusClient.CreateReceiver(queueName);
+        await using ServiceBusReceiver receiver = serviceBusClient.CreateReceiver(queueName);
 
         // Receive the message.
         ServiceBusReceivedMessage message = await receiver.ReceiveMessageAsync(timeout ?? TimeSpan.FromSeconds(5), cancellationToken);
@@ -55,12 +78,9 @@ public class QueueService(
         // If no message was received, return default.
         if (message is null) return default;
 
-        // Get the message body as a string.
-        string? body = message.Body.ToString();
-
         try
         {
-            T? result = JsonSerializer.Deserialize<T>(body);
+            T? result = JsonSerializer.Deserialize<T>(message.Body.ToString(), JsonOptions);
 
             // Complete the message so that it is not received again.
             await receiver.CompleteMessageAsync(message, cancellationToken);
@@ -77,16 +97,23 @@ public class QueueService(
     }
 
     /// <summary>
-    /// Listens message queue.
+    /// Listens for messages on the specified queue and processes them using the provided message handler.
     /// </summary>
     /// <typeparam name="T">Generic type</typeparam>
     /// <param name="queueName">Queue name</param>
-    /// <param name="messageHandler">Message handler</param>
+    /// <param name="handler">Message handler</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    public async Task StartListeningAsync<T>(string queueName, Func<T, Task> messageHandler, CancellationToken cancellationToken)
+    public async Task StartListeningAsync<T>(
+        string queueName,
+        Func<T, CancellationToken, Task> handler,
+        CancellationToken cancellationToken = default)
     {
-        if (_processor is not null)
-            await StopListeningAsync();
+        // Check for null arguments.
+        ArgumentNullException.ThrowIfNull(handler);
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+
+        await StopListeningAsync();
 
         // Create options.
         ServiceBusProcessorOptions options = new()
@@ -103,21 +130,31 @@ public class QueueService(
         {
             try
             {
-                string body = args.Message.Body.ToString();
+                // Dead letter invalid messages.
+                if (JsonSerializer.Deserialize<T>(args.Message.Body.ToString(), JsonOptions) is not { } payload)
+                {
+                    if (logger.IsEnabled(LogLevel.Warning))
+                        logger.LogWarning("Invalid message received. Dead-lettering.");
 
-                T? obj = JsonSerializer.Deserialize<T>(body);
+                    await args.DeadLetterMessageAsync(
+                        args.Message,
+                        deadLetterReason: "InvalidPayload",
+                        deadLetterErrorDescription: $"Unable to deserialize message to {typeof(T).Name}"
+                    );
 
-                if (obj is not null)
-                    await messageHandler(obj);
+                    return;
+                }
 
-                await args.CompleteMessageAsync(args.Message);
+                await handler(payload, args.CancellationToken);
+
+                await args.CompleteMessageAsync(args.Message, args.CancellationToken);
             }
             catch (Exception ex)
             {
                 if (logger.IsEnabled(LogLevel.Error))
                     logger.LogError(ex, "An error occurred while processing the message. Abandoning message.");
 
-                await args.AbandonMessageAsync(args.Message);
+                await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
             }
         };
 
@@ -125,7 +162,7 @@ public class QueueService(
         _processor.ProcessErrorAsync += args =>
         {
             if (logger.IsEnabled(LogLevel.Error))
-                logger.LogError("Error processing message: {Message}", args.Exception.Message);
+                logger.LogError(args.Exception, "Service Bus processor error: EntityPath: {EntityPath}", args.EntityPath);
 
             return Task.CompletedTask;
         };
@@ -135,15 +172,21 @@ public class QueueService(
     }
 
     /// <summary>
-    /// Stops listening.
+    /// Stops listening and disposes resources asynchronously.
     /// </summary>
     public async Task StopListeningAsync()
     {
-        if (_processor is not null)
-        {
-            await _processor.StopProcessingAsync();
+        if (_processor is null) return;
 
-            await _processor.DisposeAsync();
-        }
+        await _processor.StopProcessingAsync();
+
+        await _processor.DisposeAsync();
+
+        _processor = null;
     }
+
+    /// <summary>
+    /// Stops listening and disposes resources asynchronously.
+    /// </summary>
+    public async ValueTask DisposeAsync() => await StopListeningAsync();
 }

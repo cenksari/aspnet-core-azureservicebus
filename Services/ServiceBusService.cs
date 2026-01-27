@@ -28,10 +28,12 @@ public class ServiceBusService(
 
         try
         {
-            await queueService.StartListeningAsync<Message>(queueName, async message =>
+            await queueService.StartListeningAsync<Message>(queueName, async (message, token) =>
             {
                 if (logger.IsEnabled(LogLevel.Information))
-                    logger.LogInformation("Message received width Id: {Id} and Message {Message}", message.Id, message.Text);
+                    logger.LogInformation("Message received with Id: {Id} and Message {Message}", message.Id, message.Text);
+
+                await Task.CompletedTask;
             },
             stoppingToken);
 
@@ -47,6 +49,11 @@ public class ServiceBusService(
             // Log any unexpected errors during the date deactivation process.
             if (logger.IsEnabled(LogLevel.Error))
                 logger.LogError(ex, "Critical error in ServiceBus listener. {Message}", ex.Message);
+        }
+        finally
+        {
+            if (queueService is IAsyncDisposable asyncDisposable)
+                await asyncDisposable.DisposeAsync();
         }
     }
 

@@ -4,9 +4,9 @@ public interface IQueueService
 {
     Task StopListeningAsync();
 
-    Task SendMessageAsync<T>(string queueName, T message, CancellationToken cancellationToken);
+    Task SendMessageAsync<T>(string queueName, T serviceBusMessage, CancellationToken cancellationToken = default);
 
-    Task<T?> ReceiveMessageAsync<T>(string queueName, TimeSpan? timeout, CancellationToken cancellationToken);
+    Task<T?> ReceiveMessageAsync<T>(string queueName, TimeSpan? timeout, CancellationToken cancellationToken = default);
 
-    Task StartListeningAsync<T>(string queueName, Func<T, Task> messageHandler, CancellationToken cancellationToken);
+    Task StartListeningAsync<T>(string queueName, Func<T, CancellationToken, Task> handler, CancellationToken cancellationToken = default);
 }
