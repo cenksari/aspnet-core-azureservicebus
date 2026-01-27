@@ -32,7 +32,8 @@ public class ServiceBusService(
             {
                 if (logger.IsEnabled(LogLevel.Information))
                     logger.LogInformation("Message received width Id: {Id} and Message {Message}", message.Id, message.Text);
-            });
+            },
+            stoppingToken);
 
             await Task.Delay(Timeout.Infinite, stoppingToken);
         }

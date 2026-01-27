@@ -6,6 +6,7 @@ using System.Text.Json;
 /// <summary>
 /// Service responsible for sending and receiving messages using Azure Service Bus queues.
 /// </summary>
+/// <param name="logger">Injected logger for logging operations</param>
 /// <param name="serviceBusClient">Injected Azure ServiceBusClient used for queue operations</param>
 public class QueueService(
     ILogger<QueueService> logger,
@@ -23,7 +24,8 @@ public class QueueService(
     /// <typeparam name="T">Generic type</typeparam>
     /// <param name="queueName">Queue name</param>
     /// <param name="message">Message to send</param>
-    public async Task SendMessageAsync<T>(string queueName, T message)
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task SendMessageAsync<T>(string queueName, T message, CancellationToken cancellationToken)
     {
         // Create a sender for the queue.
         ServiceBusSender sender = serviceBusClient.CreateSender(queueName);
@@ -32,7 +34,7 @@ public class QueueService(
         string? jsonMessage = JsonSerializer.Serialize(message);
 
         // Send the message.
-        await sender.SendMessageAsync(new ServiceBusMessage(jsonMessage));
+        await sender.SendMessageAsync(new(jsonMessage), cancellationToken);
     }
 
     /// <summary>
@@ -41,13 +43,14 @@ public class QueueService(
     /// <typeparam name="T">Generic type</typeparam>
     /// <param name="queueName">Queue name</param>
     /// <param name="timeout">Time out</param>
-    public async Task<T?> ReceiveMessageAsync<T>(string queueName, TimeSpan? timeout)
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task<T?> ReceiveMessageAsync<T>(string queueName, TimeSpan? timeout, CancellationToken cancellationToken)
     {
         // Create a receiver for the queue.
         ServiceBusReceiver receiver = serviceBusClient.CreateReceiver(queueName);
 
         // Receive the message.
-        ServiceBusReceivedMessage message = await receiver.ReceiveMessageAsync(timeout ?? TimeSpan.FromSeconds(5));
+        ServiceBusReceivedMessage message = await receiver.ReceiveMessageAsync(timeout ?? TimeSpan.FromSeconds(5), cancellationToken);
 
         // If no message was received, return default.
         if (message is null) return default;
@@ -57,19 +60,17 @@ public class QueueService(
 
         try
         {
-            // Deserialize message.
             T? result = JsonSerializer.Deserialize<T>(body);
 
             // Complete the message so that it is not received again.
-            await receiver.CompleteMessageAsync(message);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
 
             // Deserialize the message body from JSON.
             return result;
         }
         catch
         {
-            // Abandon message.
-            await receiver.AbandonMessageAsync(message);
+            await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
 
             throw;
         }
@@ -81,17 +82,21 @@ public class QueueService(
     /// <typeparam name="T">Generic type</typeparam>
     /// <param name="queueName">Queue name</param>
     /// <param name="messageHandler">Message handler</param>
-    public async Task StartListeningAsync<T>(string queueName, Func<T, Task> messageHandler)
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task StartListeningAsync<T>(string queueName, Func<T, Task> messageHandler, CancellationToken cancellationToken)
     {
         if (_processor is not null)
             await StopListeningAsync();
 
-        // Create a processor.
-        _processor = serviceBusClient.CreateProcessor(queueName, new ServiceBusProcessorOptions
+        // Create options.
+        ServiceBusProcessorOptions options = new()
         {
             MaxConcurrentCalls = 1,
             AutoCompleteMessages = false
-        });
+        };
+
+        // Create a processor.
+        _processor = serviceBusClient.CreateProcessor(queueName, options);
 
         // Process message.
         _processor.ProcessMessageAsync += async args =>
@@ -126,7 +131,7 @@ public class QueueService(
         };
 
         // Start processing.
-        await _processor.StartProcessingAsync();
+        await _processor.StartProcessingAsync(cancellationToken);
     }
 
     /// <summary>
