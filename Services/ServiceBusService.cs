@@ -31,7 +31,7 @@ public class ServiceBusService(
             await queueService.StartListeningAsync<Message>(queueName, async (message, token) =>
             {
                 if (logger.IsEnabled(LogLevel.Information))
-                    logger.LogInformation("Message received with Id: {Id} and Message {Message}", message.Id, message.Text);
+                    logger.LogInformation("Message received with Id: {Id} and Message: {Message}", message.Id, message.Text);
 
                 await Task.CompletedTask;
             },

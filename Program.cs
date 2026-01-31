@@ -1,25 +1,22 @@
 using aspnet_core_azureservicebus.Models;
 using aspnet_core_azureservicebus.QueueService;
 using aspnet_core_azureservicebus.Services;
+using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Azure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services
-    .AddRequestTimeouts(options =>
+builder.Services.AddRequestTimeouts(options =>
+{
+    options.DefaultPolicy = new()
     {
-        options.DefaultPolicy = new()
-        {
-            Timeout = TimeSpan.FromSeconds(10)
-        };
-    })
-    .AddAzureClients(options =>
-    {
-        options.AddServiceBusClient(builder.Configuration["ServiceBus:ConnectionString"]);
-    });
+        Timeout = TimeSpan.FromSeconds(10)
+    };
+});
+
+builder.Services.AddSingleton(x => new ServiceBusClient(builder.Configuration["ServiceBus:ConnectionString"]));
 
 builder.Services.AddSingleton<IQueueService, QueueService>();
 
