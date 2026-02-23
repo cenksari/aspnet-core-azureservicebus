@@ -10,10 +10,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRequestTimeouts(options =>
 {
-    options.DefaultPolicy = new()
-    {
-        Timeout = TimeSpan.FromSeconds(10)
-    };
+	options.DefaultPolicy = new()
+	{
+		Timeout = TimeSpan.FromSeconds(10)
+	};
 });
 
 builder.Services.AddSingleton(x => new ServiceBusClient(builder.Configuration["ServiceBus:ConnectionString"]));
@@ -31,34 +31,34 @@ app.UseRequestTimeouts();
 app.UseHttpsRedirection();
 
 app.MapPost("/send", async (
-    IQueueService queueService,
-    IConfiguration configuration,
-    [FromBody] Message message,
-    CancellationToken cancellationToken
+	IQueueService queueService,
+	IConfiguration configuration,
+	[FromBody] Message message,
+	CancellationToken cancellationToken
 ) =>
 {
-    string queueName = configuration["ServiceBus:QueueName"]
-        ?? throw new MissingFieldException("ServiceBus queue name configuration not found!");
+	string queueName = configuration["ServiceBus:QueueName"]
+		?? throw new MissingFieldException("ServiceBus queue name configuration not found!");
 
-    if (string.IsNullOrEmpty(message.Text))
-        return Results.BadRequest(
-            new
-            {
-                Status = "Message failed",
-                Error = "Please provide a message!"
-            }
-        );
+	if (string.IsNullOrEmpty(message.Text))
+		return Results.BadRequest(
+			new
+			{
+				Status = "Message failed",
+				Error = "Please provide a message!"
+			}
+		);
 
-    await queueService.SendMessageAsync(queueName, message, cancellationToken);
+	await queueService.SendMessageAsync(queueName, message, cancellationToken);
 
-    return Results.Ok(
-        new
-        {
-            message.Id,
-            message.Text,
-            Status = "Message sent"
-        }
-    );
+	return Results.Ok(
+		new
+		{
+			message.Id,
+			message.Text,
+			Status = "Message sent"
+		}
+	);
 });
 
 await app.RunAsync();
